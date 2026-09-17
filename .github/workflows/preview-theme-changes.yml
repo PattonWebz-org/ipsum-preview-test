@@ -25,8 +25,13 @@ on:
     # Skip pull requests that only touch repository tooling: nothing there
     # changes what the theme looks like in Playground. A pull request that
     # touches both these files and the theme itself still gets a preview.
+    #
+    # `.github/**` is deliberately NOT ignored wholesale. The preview imports
+    # `.github/ipsum-demo-content.xml`, so a change to that file does change
+    # what the preview shows. Only the tooling paths are listed.
     paths-ignore:
-      - '.github/**'
+      - '.github/workflows/**'
+      - '.github/*.md'
       - '.husky/**'
       - '.gitignore'
       - '.wp-env.json'
