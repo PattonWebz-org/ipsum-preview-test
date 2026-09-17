@@ -107,7 +107,7 @@ jobs:
 
           # 1. Pull the blueprint back out of the preview URL
           enc=$(python3 -c 'import sys,urllib.parse; q=urllib.parse.urlparse(sys.argv[1]).query; print(urllib.parse.parse_qs(q)["blueprint-url"][0])' "$PREVIEW_URL")
-          json=$(python3 -c 'import sys,base64,urllib.parse; d=urllib.parse.unquote(sys.argv[1]); print(base64.b64decode(d.split(",",1)[1]).decode())' "$enc")
+          json=$(python3 -c 'import sys,base64; d=sys.argv[1]; meta,_,payload=d.partition(","); print(base64.b64decode(payload).decode() if "base64" in meta else payload)' "$enc")
           echo "$json"
 
           # 2. It must clone the head repo at the head ref
