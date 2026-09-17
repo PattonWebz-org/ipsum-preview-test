@@ -13,6 +13,11 @@ name: Preview Theme Changes
 # https://github.com/WordPress/action-wp-playground-pr-preview/issues/93
 # Pointing the clone at the head repository works around that for both forks
 # and branches from this repository.
+#
+# NOTE (test harness): the "Verify the preview targets the fork" step is not
+# part of the upstream pull request. It exists so this copy can prove, rather
+# than assert, that the generated preview clones the fork and not the base.
+# Remove it when this workflow is lifted back into a real repository.
 
 on:
   pull_request_target:
@@ -41,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Add the WordPress Playground preview button
+        id: preview
         uses: WordPress/action-wp-playground-pr-preview@1b15093d61b5e98cdfeb31466f34ade495762cd7 # v4.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -83,3 +89,55 @@ jobs:
                 }
               ]
             }
+
+      - name: Verify the preview targets the fork
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.preview-url }}
+          BASE: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${PREVIEW_URL:-}" ]; then
+            echo "::error::the action did not expose a preview-url output"
+            exit 1
+          fi
+
+          # 1. Pull the blueprint back out of the preview URL
+          enc=$(python3 -c 'import sys,urllib.parse; q=urllib.parse.urlparse(sys.argv[1]).query; print(urllib.parse.parse_qs(q)["blueprint-url"][0])' "$PREVIEW_URL")
+          json=$(python3 -c 'import sys,base64,urllib.parse; d=urllib.parse.unquote(sys.argv[1]); print(base64.b64decode(d.split(",",1)[1]).decode())' "$enc")
+          echo "$json"
+
+          # 2. It must clone the head repo at the head ref
+          url=$(jq -r '.steps[] | select(.step=="installTheme") | .themeData.url' <<<"$json")
+          ref=$(jq -r '.steps[] | select(.step=="installTheme") | .themeData.ref' <<<"$json")
+          [ "$url" = "https://github.com/${HEAD_REPO}.git" ] || { echo "::error::clones $url, expected https://github.com/${HEAD_REPO}.git"; exit 1; }
+          [ "$ref" = "$HEAD_REF" ] || { echo "::error::ref '$ref' != '$HEAD_REF'"; exit 1; }
+
+          # 3. The ref must not exist in the base - that is the whole point
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${BASE}/branches/${HEAD_REF}")
+          [ "$code" = "404" ] || { echo "::error::base already has '${HEAD_REF}' (HTTP $code)"; exit 1; }
+
+          # 4. The preview URL should be reachable
+          [ "$(curl -sS -o /dev/null -w '%{http_code}' "$PREVIEW_URL")" = "200" ] || echo "::warning::preview URL not 200"
+
+          {
+            echo "### Preview verification"
+            echo
+            echo "| check | value |"
+            echo "|---|---|"
+            echo "| preview URL | $PREVIEW_URL |"
+            echo "| clones | $url |"
+            echo "| ref | $ref |"
+            echo "| base already has this ref | no (404) |"
+            echo
+            echo '<details><summary>Decoded Blueprint</summary>'
+            echo
+            echo '```json'
+            echo "$json"
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
